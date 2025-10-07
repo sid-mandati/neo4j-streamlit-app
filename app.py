@@ -1,5 +1,4 @@
 import streamlit as st
-# Import from the new file
 from cypher_chain import Neo4jLLMConnector
 
 st.set_page_config(layout="wide")
@@ -7,10 +6,10 @@ st.title("🤖 Natural Language Querying with Neo4j")
 
 try:
     if 'connector' not in st.session_state:
-        with st.spinner("Connecting to services..."):
+        with st.spinner("Connecting to services and analyzing graph schema... Please wait, this may take several minutes on first startup."):
             st.session_state.connector = Neo4jLLMConnector()
 except Exception as e:
-    st.error(f"Failed to initialize. Check your credentials and schema. Error: {e}")
+    st.error(f"Failed to initialize. Check your credentials in the secrets manager. Error: {e}")
     st.stop()
 
 if "messages" not in st.session_state:
