@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- 1. Define the Schema ---
-# This remains the same.
+# This schema now correctly reflects the relationships in your database.
 graph_schema = """
 # Node Labels and Properties
 (:MaintenanceWorkOrder {work_order_id: 'INTEGER', work_order_description: 'STRING', maintenance_type: 'STRING'})
@@ -30,7 +30,7 @@ graph_schema = """
 """
 
 # --- 2. Create Few-Shot Examples ---
-# These examples are still very useful for pattern recognition.
+# These are still helpful for pattern recognition.
 cypher_examples = [
     {
         "question": "Which machine had the highest number of downtime events?",
@@ -53,12 +53,6 @@ cypher_examples = [
                     ORDER BY frequency DESC
                     LIMIT 1;""",
     },
-    {
-        "question": "Show me 5 maintenance work orders.",
-        "query": """MATCH (wo:MaintenanceWorkOrder)
-                    RETURN wo.work_order_id, wo.work_order_description
-                    LIMIT 5;""",
-    },
 ]
 
 # --- 3. Create the NEW, Stricter Custom Prompt Template ---
@@ -67,17 +61,19 @@ Your ONLY task is to write a single, syntactically correct Cypher query to answe
 DO NOT add any text before or after the query. DO NOT explain the query.
 
 You must follow these strict rules:
-1.  **Use ONLY the nodes, relationships, and properties provided in the Schema.** Do not hallucinate or invent any that are not listed.
-2.  **Follow the graph structure.** Do not create paths that do not exist in the schema. For example, the path `(:Location)-[:DUE_TO_FAULT]->(:MachineFault)` is INVALID because Locations do not have a DUE_TO_FAULT relationship. The correct way to find faults for a machine in a location is `(:Location)<-[:FALLS_UNDER]-(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)-[:DUE_TO_FAULT]->(:MachineFault)`.
-3.  **Identify entities correctly.** When a question mentions a specific machine by name, like 'Line 5 Filler / Capper', you MUST filter on the `machine_description` property of the `Machine` node. DO NOT mistake it for a Location.
-4.  **Count events, not nodes.** When asked for the "frequency" or "number of times" a fault occurs, you MUST count the `MachineDowntimeEvent` nodes associated with that fault. DO NOT simply count the `MachineFault` nodes.
-5.  **Always return properties.** Do not return entire nodes. For example, instead of `RETURN m`, use `RETURN m.machine_description`.
+1.  **Use ONLY the nodes, relationships, and properties provided in the Schema.**
+2.  **Follow the graph structure.** Do not create paths that do not exist.
+    * **INVALID PATH:** `(:Location)-[:DUE_TO_FAULT]->(:MachineFault)`. Locations are not directly connected to faults.
+    * **CORRECT PATH to find downtime events for a machine:** `(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)`. This is the ONLY way to connect a Machine to its downtime.
+3.  **Identify entities correctly.** When a question mentions a specific machine by name, like 'Line 5 Filler / Capper', you MUST filter on the `machine_description` property of the `Machine` node.
+4.  **Count events, not nodes.** When asked for the "frequency" or "number of times" a fault occurs, you MUST count the `MachineDowntimeEvent` nodes.
+5.  **Always return properties.** Do not return entire nodes (e.g., use `RETURN m.machine_description`, not `RETURN m`).
 
 Schema:
 {schema}
 
 ---
-Here are some examples of questions and their correct Cypher queries. Use them to learn the correct patterns.
+Here are some examples of questions and their correct Cypher queries.
 {examples}
 ---
 
@@ -90,7 +86,6 @@ CYPHER_PROMPT = PromptTemplate(
 )
 
 # --- 4. The Connector Class ---
-# This remains the same, but will now use the new, stricter prompt.
 class Neo4jLLMConnector:
     def __init__(self):
         self.graph = Neo4jGraph(
