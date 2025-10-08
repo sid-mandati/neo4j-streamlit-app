@@ -56,8 +56,15 @@ cypher_examples = [
 ]
 
 # --- 3. Create the Custom Prompt Template ---
-# This template no longer takes "schema" as an input variable.
-# We inject the schema directly into the template string.
+# This template now correctly expects 'schema' and 'question' as inputs.
+# The examples are "baked in" as static text.
+
+# First, format the examples into a plain string.
+formatted_examples = "\n\n".join(
+    [f"Question: {e['question']}\nQuery: ```cypher\n{e['query']}\n```" for e in cypher_examples]
+)
+
+# Next, create the template string, injecting the examples directly.
 CYPHER_GENERATION_TEMPLATE = f"""You are an expert Neo4j Cypher query developer.
 Your ONLY task is to write a single, syntactically correct Cypher query to answer the user's question.
 DO NOT add any text before or after the query. DO NOT explain the query.
@@ -71,20 +78,20 @@ You must follow these strict rules:
 6.  **Always return properties.** Do not return entire nodes.
 
 Schema:
-{graph_schema}
+{{schema}}
 
 ---
 Here are some examples of questions and their correct Cypher queries. Use them to learn the patterns.
-{{examples}}
+{formatted_examples}
 ---
 
 The question is:
 {{question}}
 """
 
-# The input variables no longer include "schema"
+# The input variables now correctly match what the chain provides.
 CYPHER_PROMPT = PromptTemplate(
-    input_variables=["question", "examples"], template=CYPHER_GENERATION_TEMPLATE
+    input_variables=["schema", "question"], template=CYPHER_GENERATION_TEMPLATE
 )
 
 # --- 4. The Connector Class ---
@@ -109,8 +116,8 @@ class Neo4jLLMConnector:
 
     def ask(self, question):
         try:
-            # We no longer pass the schema here, only the question and examples
-            result = self.chain.invoke({"query": question, "examples": cypher_examples})
+            # The invoke call is now simpler, as the chain handles all prompt variables.
+            result = self.chain.invoke({"query": question})
             
             cypher_query = result.get("intermediate_steps", [{}])[0].get("query", "Query not generated.")
             final_answer = result.get("result", "Could not find an answer.")
