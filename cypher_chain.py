@@ -1,93 +1,59 @@
 import os
-from langchain_community.graphs import Neo4jGraph
-from langchain.chains import GraphCypherQAChain
-from langchain_openai import ChatOpenAI
-from langchain.prompts.prompt import PromptTemplate
-from dotenv import load_dotenv
-from schema_builder import build_enriched_schema
+from neo4j import GraphDatabase
 
-load_dotenv()
+def get_distinct_values(session, node_label, property_name):
+    """Helper function to run a DISTINCT query using session.run()."""
+    query = f"MATCH (n:{node_label}) WHERE n.{property_name} IS NOT NULL RETURN DISTINCT n.{property_name} AS values"
+    result = session.run(query)
+    # Ensure all values are strings for consistent formatting
+    return [str(record["values"]) for record in result]
 
-# Build the schema automatically on startup
-graph_schema = build_enriched_schema()
+def build_enriched_schema():
+    """
+    Connects to Neo4j, fetches distinct values for key properties,
+    and returns a formatted schema string.
+    """
+    uri = os.getenv("NEO4J_URI")
+    user = os.getenv("NEO4J_USER")
+    password = os.getenv("NEO4J_PASSWORD")
 
-# Define Few-Shot Examples (with corrected type conversion for date math)
-cypher_examples = [
-    {
-        "question": "Which machine had the most downtime events?",
-        "query": """MATCH (m:Machine)-[:RECORDED_DOWNTIME_EVENT]->(d:MachineDowntimeEvent)
-                    WITH m, COUNT(d) AS downtime_events
-                    RETURN m.machine_description AS machine, downtime_events
-                    ORDER BY downtime_events DESC
-                    LIMIT 1;""",
-    },
-    {
-        "question": "Are there any overdue maintenance work orders?",
-        "query": """MATCH (wo:MaintenanceWorkOrder)
-                    WHERE wo.order_status IN ["In Progress", "Not Started"] AND wo.planned_date < date()
-                    RETURN wo.work_order_id, wo.work_order_description, wo.planned_date
-                    LIMIT 5;""",
-    },
-    {
-        "question": "Did any downtime occur on a machine within 7 days after maintenance was completed on it?",
-        "query": """MATCH (wo:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(e:Equipment)-[:MAPS_TO]->(m:Machine)-[:RECORDED_DOWNTIME_EVENT]->(d:MachineDowntimeEvent)
-                    WHERE d.event_start_datetime > datetime(wo.actual_finish_date) 
-                      AND d.event_start_datetime < datetime(wo.actual_finish_date) + duration({days: 7})
-                    RETURN m.machine_description, wo.work_order_description, d.event_start_datetime
-                    LIMIT 5;""",
-    }
-]
+    driver = GraphDatabase.driver(uri, auth=(user, password))
 
-# Define the Custom Prompt Template (with a new rule for type conversion)
-CYPHER_GENERATION_TEMPLATE = """You are an expert Neo4j Cypher query developer. Your ONLY task is to write a single, syntactically correct Cypher query to answer the user's question. DO NOT add any text before or after the query.
+    with driver.session() as session:
+        order_status_values = get_distinct_values(session, "MaintenanceWorkOrder", "order_status")
+        maintenance_type_values = get_distinct_values(session, "MaintenanceWorkOrder", "maintenance_type")
+        fault_category_values = get_distinct_values(session, "MachineFault", "fault_category")
 
-You must follow these strict rules:
-1.  **Use ONLY the nodes, relationships, and properties provided in the Schema.**
-2.  **Follow the graph structure.** Do not create paths that do not exist.
-3.  **Handle DATE to DATETIME conversion.** Properties of type `DATE` (like `actual_finish_date`) MUST be converted to a `DATETIME` using `datetime()` before you can add a `duration` to them. For example: `datetime(wo.actual_finish_date) + duration({days: 7})`.
-4.  **To correlate maintenance with downtime**, use the path: `(:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)-[:MAPS_TO]->(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)`.
-5.  **Use provided values.** When a property has a comment listing possible values, you MUST use those values.
-6.  **Count events, not nodes.** To find the "frequency" of a fault, you MUST count `MachineDowntimeEvent` nodes.
-7.  **Always return properties.** Do not return entire nodes.
+    driver.close()
 
-Schema:
-{schema}
----
-Here are some examples of questions and their correct Cypher queries:
-{examples}
----
-The question is:
-{question}
+    # Use repr() to ensure values with quotes are correctly escaped in the f-string
+    schema = f"""
+# Node Labels and Properties
+(:MaintenanceWorkOrder {{
+    work_order_id: 'INTEGER', 
+    work_order_description: 'STRING', 
+    maintenance_type: 'STRING' /* one of: {repr(maintenance_type_values)} */, 
+    order_status: 'STRING' /* one of: {repr(order_status_values)} */,
+    actual_finish_date: 'DATE'
+}})
+(:Equipment {{sap_equipment_number: 'STRING', sap_equipment_description: 'STRING'}})
+(:MachineDowntimeEvent {{event_start_datetime: 'DATETIME', downtime_in_minutes: 'FLOAT'}})
+(:Machine {{machine_id: 'STRING', machine_description: 'STRING'}})
+(:Location {{location_id: 'STRING', location_name: 'STRING'}})
+(:MachineFault {{
+    plant_line_machine_fault_code_id: 'STRING', 
+    fault_description: 'STRING', 
+    fault_category: 'STRING' /* one of: {repr(fault_category_values)} */
+}})
+
+# Relationships
+(:Machine)-[:FALLS_UNDER]->(:Location)
+(:Machine)-[:PROCESS_FLOWS_TO]->(:Machine)
+(:Machine)-[:CAN_FAULT_DUE_TO]->(:MachineFault)
+(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)
+(:Equipment)-[:MAPS_TO]->(:Machine)
+(:MachineDowntimeEvent)-[:DUE_TO_FAULT]->(:MachineFault)
+(:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)
+(:MaintenanceWorkOrder)-[:PERFORMED_AT_LOCATION]->(:Location)
 """
-
-CYPHER_PROMPT = PromptTemplate.from_template(CYPHER_GENERATION_TEMPLATE)
-
-# The Connector Class
-class Neo4jLLMConnector:
-    def __init__(self):
-        self.graph = Neo4jGraph(
-            url=os.getenv("NEO4J_URI"),
-            username=os.getenv("NEO4J_USER"),
-            password=os.getenv("NEO4J_PASSWORD")
-        )
-        self.graph.schema = graph_schema
-        self.llm = ChatOpenAI(temperature=0, model="gpt-4o")
-        
-        self.chain = GraphCypherQAChain.from_llm(
-            graph=self.graph,
-            llm=self.llm,
-            cypher_prompt=CYPHER_PROMPT,
-            verbose=True,
-            return_intermediate_steps=True,
-            allow_dangerous_requests=True,
-            return_direct=True
-        )
-
-    def ask(self, question):
-        try:
-            result = self.chain.invoke({"query": question, "examples": cypher_examples})
-            cypher_query = result.get("intermediate_steps", [{}])[0].get("query", "Query not generated.")
-            final_answer = result.get("result", "Could not find an answer.")
-            return cypher_query, final_answer
-        except Exception as e:
-            return "An error occurred", str(e)
+    return schema
