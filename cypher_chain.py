@@ -56,16 +56,16 @@ cypher_examples = [
 ]
 
 # --- 3. Create the Custom Prompt Template ---
-# This template now correctly expects 'schema' and 'question' as inputs.
-# The examples are "baked in" as static text.
+# This section has been corrected to avoid the formatting error.
 
 # First, format the examples into a plain string.
 formatted_examples = "\n\n".join(
     [f"Question: {e['question']}\nQuery: ```cypher\n{e['query']}\n```" for e in cypher_examples]
 )
 
-# Next, create the template string, injecting the examples directly.
-CYPHER_GENERATION_TEMPLATE = f"""You are an expert Neo4j Cypher query developer.
+# Next, create the template string. We use .format() to inject the examples,
+# leaving {schema} and {question} as placeholders for the chain.
+CYPHER_GENERATION_TEMPLATE = """You are an expert Neo4j Cypher query developer.
 Your ONLY task is to write a single, syntactically correct Cypher query to answer the user's question.
 DO NOT add any text before or after the query. DO NOT explain the query.
 
@@ -78,20 +78,21 @@ You must follow these strict rules:
 6.  **Always return properties.** Do not return entire nodes.
 
 Schema:
-{{schema}}
+{schema}
 
 ---
 Here are some examples of questions and their correct Cypher queries. Use them to learn the patterns.
-{formatted_examples}
+---
+{examples}
 ---
 
 The question is:
-{{question}}
+{question}
 """
 
 # The input variables now correctly match what the chain provides.
 CYPHER_PROMPT = PromptTemplate(
-    input_variables=["schema", "question"], template=CYPHER_GENERATION_TEMPLATE
+    input_variables=["schema", "question", "examples"], template=CYPHER_GENERATION_TEMPLATE
 )
 
 # --- 4. The Connector Class ---
@@ -103,6 +104,9 @@ class Neo4jLLMConnector:
             username=os.getenv("NEO4J_USER"),
             password=os.getenv("NEO4J_PASSWORD")
         )
+        # We manually pass our clean schema to the graph object
+        self.graph.schema = graph_schema
+        
         self.llm = ChatOpenAI(temperature=0)
         
         self.chain = GraphCypherQAChain.from_llm(
@@ -116,8 +120,8 @@ class Neo4jLLMConnector:
 
     def ask(self, question):
         try:
-            # The invoke call is now simpler, as the chain handles all prompt variables.
-            result = self.chain.invoke({"query": question})
+            # Pass the formatted examples string to the chain's invoke method
+            result = self.chain.invoke({"query": question, "examples": formatted_examples})
             
             cypher_query = result.get("intermediate_steps", [{}])[0].get("query", "Query not generated.")
             final_answer = result.get("result", "Could not find an answer.")
