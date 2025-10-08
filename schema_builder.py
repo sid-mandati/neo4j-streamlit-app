@@ -25,34 +25,10 @@ def build_enriched_schema():
 
     driver.close()
 
-    # Build the schema string with the fetched values included as comments
     schema = f"""
 # Node Labels and Properties
 (:MaintenanceWorkOrder {{
     work_order_id: 'INTEGER', 
     work_order_description: 'STRING', 
     maintenance_type: 'STRING' /* one of: {maintenance_type_values} */, 
-    order_status: 'STRING' /* one of: {order_status_values} */,
-    actual_finish_date: 'DATE'
-}})
-(:Equipment {{sap_equipment_number: 'STRING', sap_equipment_description: 'STRING'}})
-(:MachineDowntimeEvent {{event_start_datetime: 'DATETIME', downtime_in_minutes: 'FLOAT'}})
-(:Machine {{machine_id: 'STRING', machine_description: 'STRING'}})
-(:Location {{location_id: 'STRING', location_name: 'STRING'}})
-(:MachineFault {{
-    plant_line_machine_fault_code_id: 'STRING', 
-    fault_description: 'STRING', 
-    fault_category: 'STRING' /* one of: {fault_category_values} */
-}})
-
-# Relationships
-(:Machine)-[:FALLS_UNDER]->(:Location)
-(:Machine)-[:PROCESS_FLOWS_TO]->(:Machine)
-(:Machine)-[:CAN_FAULT_DUE_TO]->(:MachineFault)
-(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)
-(:Equipment)-[:MAPS_TO]->(:Machine)
-(:MachineDowntimeEvent)-[:DUE_TO_FAULT]->(:MachineFault)
-(:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)
-(:MaintenanceWorkOrder)-[:PERFORMED_AT_LOCATION]->(:Location)
-"""
-    return schema
+    order_status: 'STRING' /* one of: {order_status_values
