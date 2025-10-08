@@ -1,10 +1,10 @@
 import os
 from neo4j import GraphDatabase
 
-def get_distinct_values(tx, node_label, property_name):
-    """Helper function to run a DISTINCT query."""
+def get_distinct_values(session, node_label, property_name):
+    """Helper function to run a DISTINCT query using session.run()."""
     query = f"MATCH (n:{node_label}) WHERE n.{property_name} IS NOT NULL RETURN DISTINCT n.{property_name} AS values"
-    result = tx.run(query)
+    result = session.run(query)
     return [record["values"] for record in result]
 
 def build_enriched_schema():
@@ -19,10 +19,10 @@ def build_enriched_schema():
     driver = GraphDatabase.driver(uri, auth=(user, password))
 
     with driver.session() as session:
-        # Fetch distinct values for the properties we want to enrich
-        order_status_values = session.read_transaction(get_distinct_values, "MaintenanceWorkOrder", "order_status")
-        maintenance_type_values = session.read_transaction(get_distinct_values, "MaintenanceWorkOrder", "maintenance_type")
-        fault_category_values = session.read_transaction(get_distinct_values, "MachineFault", "fault_category")
+        # Call the helper function directly with the session object
+        order_status_values = get_distinct_values(session, "MaintenanceWorkOrder", "order_status")
+        maintenance_type_values = get_distinct_values(session, "MaintenanceWorkOrder", "maintenance_type")
+        fault_category_values = get_distinct_values(session, "MachineFault", "fault_category")
 
     driver.close()
 
@@ -47,13 +47,4 @@ def build_enriched_schema():
 }})
 
 # Relationships
-(:Machine)-[:FALLS_UNDER]->(:Location)
-(:Machine)-[:PROCESS_FLOWS_TO]->(:Machine)
-(:Machine)-[:CAN_FAULT_DUE_TO]->(:MachineFault)
-(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)
-(:Equipment)-[:MAPS_TO]->(:Machine)
-(:MachineDowntimeEvent)-[:DUE_TO_FAULT]->(:MachineFault)
-(:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)
-(:MaintenanceWorkOrder)-[:PERFORMED_AT_LOCATION]->(:Location)
-"""
-    return schema
+(:Machine)-[:FALL
