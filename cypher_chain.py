@@ -11,7 +11,7 @@ load_dotenv()
 # Build the schema automatically on startup
 graph_schema = build_enriched_schema()
 
-# Define Few-Shot Examples
+# Define Few-Shot Examples (with a new one for upstream traversal)
 cypher_examples = [
     {
         "question": "How many machines are there?",
@@ -32,17 +32,23 @@ cypher_examples = [
                     RETURN wo.work_order_id, wo.work_order_description, wo.planned_date
                     LIMIT 5;""",
     },
+    {
+        "question": "Find a machine that is upstream from the 'Line 5 Case Packer'.",
+        "query": """MATCH (upstream:Machine)-[:PROCESS_FLOWS_TO*]->(downstream:Machine {machine_description: 'Line 5 Case Packer'})
+                    RETURN upstream.machine_description LIMIT 1;""",
+    },
 ]
 
-# Define the Custom Prompt Template
+# Define the Custom Prompt Template (with a new rule for directionality)
 CYPHER_GENERATION_TEMPLATE = """You are an expert Neo4j Cypher query developer. Your ONLY task is to write a single, syntactically correct Cypher query to answer the user's question. DO NOT add any text before or after the query.
 
 You must follow these strict rules:
 1.  **Use ONLY the nodes, relationships, and properties provided in the Schema.**
 2.  **Follow the graph structure.** Do not create paths that do not exist.
-3.  **Use provided values.** When a property has a comment listing possible values, you MUST use those values.
-4.  **Count events, not nodes.** To find the "frequency" of a fault, you MUST count `MachineDowntimeEvent` nodes.
-5.  **Always return properties.** Do not return entire nodes.
+3.  **Handle directionality.** The `PROCESS_FLOWS_TO` relationship goes from an upstream machine to a downstream machine. For questions about "upstream", the path is `(upstream)-[:PROCESS_FLOWS_TO]->(target)`. For "downstream", the path is `(target)-[:PROCESS_FLOWS_TO]->(downstream)`.
+4.  **Use provided values.** When a property has a comment listing possible values (e.g., `/* one of: ... */`), you MUST use those values when filtering.
+5.  **Count events, not nodes.** To find the "frequency" of a fault, you MUST count `MachineDowntimeEvent` nodes.
+6.  **Always return properties.** Do not return entire nodes.
 
 Schema:
 {schema}
@@ -56,7 +62,7 @@ The question is:
 
 CYPHER_PROMPT = PromptTemplate.from_template(CYPHER_GENERATION_TEMPLATE)
 
-# The Connector Class
+# The Connector Class (upgraded to gpt-4o)
 class Neo4jLLMConnector:
     def __init__(self):
         self.graph = Neo4jGraph(
@@ -65,7 +71,7 @@ class Neo4jLLMConnector:
             password=os.getenv("NEO4J_PASSWORD")
         )
         self.graph.schema = graph_schema
-        self.llm = ChatOpenAI(temperature=0, model="gpt-4")
+        self.llm = ChatOpenAI(temperature=0, model="gpt-4o")
         
         self.chain = GraphCypherQAChain.from_llm(
             graph=self.graph,
@@ -74,7 +80,6 @@ class Neo4jLLMConnector:
             verbose=True,
             return_intermediate_steps=True,
             allow_dangerous_requests=True,
-            # ADD THIS LINE: This tells the chain to return the raw data directly.
             return_direct=True
         )
 
@@ -82,10 +87,7 @@ class Neo4jLLMConnector:
         try:
             result = self.chain.invoke({"query": question, "examples": cypher_examples})
             cypher_query = result.get("intermediate_steps", [{}])[0].get("query", "Query not generated.")
-            # The final answer is now the raw query result, not an LLM summary.
             final_answer = result.get("result", "Could not find an answer.")
-            
             return cypher_query, final_answer
         except Exception as e:
             return "An error occurred", str(e)
-
