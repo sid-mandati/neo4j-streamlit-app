@@ -7,30 +7,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- 1. Define the Schema ---
-# No changes here.
-graph_schema = """
-# Node Labels and Properties
-(:MaintenanceWorkOrder {work_order_id: 'INTEGER', work_order_description: 'STRING', maintenance_type: 'STRING', actual_finish_date: 'DATE'})
-(:Equipment {sap_equipment_number: 'STRING', sap_equipment_description: 'STRING'})
-(:MachineDowntimeEvent {event_start_datetime: 'DATETIME', downtime_in_minutes: 'FLOAT'})
-(:Machine {machine_id: 'STRING', machine_description: 'STRING', plant_id: 'INTEGER', location_id: 'STRING'})
-(:Location {location_id: 'STRING', location_name: 'STRING', plant_id: 'INTEGER'})
-(:MachineFault {plant_line_machine_fault_code_id: 'STRING', fault_description: 'STRING', fault_category: 'STRING'})
+# NOTE: The manual schema has been removed to ensure compatibility with the deployment environment.
+# This will result in a slow startup time for the application.
 
-# Relationships
-(:Machine)-[:FALLS_UNDER]->(:Location)
-(:Machine)-[:PROCESS_FLOWS_TO]->(:Machine)
-(:Machine)-[:CAN_FAULT_DUE_TO]->(:MachineFault)
-(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)
-(:Equipment)-[:MAPS_TO]->(:Machine)
-(:MachineDowntimeEvent)-[:DUE_TO_FAULT]->(:MachineFault)
-(:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)
-(:MaintenanceWorkOrder)-[:PERFORMED_AT_LOCATION]->(:Location)
-"""
-
-# --- 2. Create Few-Shot Examples ---
-# I've added a new example for maintenance questions.
 cypher_examples = [
     {
         "question": "Which machine had the highest number of downtime events?",
@@ -61,8 +40,6 @@ cypher_examples = [
     },
 ]
 
-# --- 3. Create the Stricter Custom Prompt Template ---
-# I've added a new rule for handling dates.
 CYPHER_GENERATION_TEMPLATE = """You are an expert Neo4j Cypher query developer.
 Your ONLY task is to write a single, syntactically correct Cypher query to answer the user's question.
 DO NOT add any text before or after the query. DO NOT explain the query.
@@ -91,15 +68,12 @@ CYPHER_PROMPT = PromptTemplate(
     input_variables=["schema", "question", "examples"], template=CYPHER_GENERATION_TEMPLATE
 )
 
-# --- 4. The Connector Class ---
-# This remains the same, but uses the updated prompt and examples.
 class Neo4jLLMConnector:
     def __init__(self):
         self.graph = Neo4jGraph(
             url=os.getenv("NEO4J_URI"),
             username=os.getenv("NEO4J_USER"),
-            password=os.getenv("NEO4J_PASSWORD"),
-            schema=graph_schema
+            password=os.getenv("NEO4J_PASSWORD")
         )
         self.llm = ChatOpenAI(temperature=0)
         
