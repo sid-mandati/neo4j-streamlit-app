@@ -19,7 +19,6 @@ def build_enriched_schema():
     driver = GraphDatabase.driver(uri, auth=(user, password))
 
     with driver.session() as session:
-        # Call the helper function directly with the session object
         order_status_values = get_distinct_values(session, "MaintenanceWorkOrder", "order_status")
         maintenance_type_values = get_distinct_values(session, "MaintenanceWorkOrder", "maintenance_type")
         fault_category_values = get_distinct_values(session, "MachineFault", "fault_category")
@@ -47,4 +46,13 @@ def build_enriched_schema():
 }})
 
 # Relationships
-(:Machine)-[:FALL
+(:Machine)-[:FALLS_UNDER]->(:Location)
+(:Machine)-[:PROCESS_FLOWS_TO]->(:Machine)
+(:Machine)-[:CAN_FAULT_DUE_TO]->(:MachineFault)
+(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)
+(:Equipment)-[:MAPS_TO]->(:Machine)
+(:MachineDowntimeEvent)-[:DUE_TO_FAULT]->(:MachineFault)
+(:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)
+(:MaintenanceWorkOrder)-[:PERFORMED_AT_LOCATION]->(:Location)
+"""
+    return schema
