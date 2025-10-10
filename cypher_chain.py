@@ -49,7 +49,5 @@ cypher_examples = [
     {"question": "Did any downtime occur on a machine within 7 days after maintenance?", "query": "MATCH (wo:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(e:Equipment)-[:MAPS_TO]->(m:Machine)-[:RECORDED_DOWNTIME_EVENT]->(d:MachineDowntimeEvent) WHERE d.event_start_datetime > datetime(wo.actual_finish_date) AND d.event_start_datetime < datetime(wo.actual_finish_date) + duration({days: 7}) RETURN m.machine_description, wo.work_order_description LIMIT 5;"},
 ]
 
-CYPHER_GENERATION_TEMPLATE = """You are an expert Neo4j developer. Write a Cypher query to answer the user's question.
-
-You must follow these strict rules:
-1. Use ONLY the nodes, relationships, and properties in
+# This is the corrected prompt template with the closing triple quotes.
+CYPHER_GENERATION_TEMPLATE = """You are an expert Neo4j developer.
