@@ -1,8 +1,7 @@
+streamlit
 pandas
+python-dotenv
 neo4j
 langchain
 langchain-community
 langchain-openai
-Flask
-gunicorn
-google-cloud-secret-manager
