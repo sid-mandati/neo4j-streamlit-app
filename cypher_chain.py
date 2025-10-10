@@ -1,52 +1,12 @@
 import os
-from neo4j import GraphDatabase
 from langchain_community.graphs import Neo4jGraph
 from langchain.chains import GraphCypherQAChain
 from langchain_openai import ChatOpenAI
 from langchain.prompts.prompt import PromptTemplate
 from dotenv import load_dotenv
+from schema_builder import build_enriched_schema
 
 load_dotenv()
-
-# --- START: Self-Contained Schema Builder Logic ---
-
-def get_distinct_values(session, node_label, property_name):
-    query = f"MATCH (n:{node_label}) WHERE n.{property_name} IS NOT NULL RETURN DISTINCT n.{property_name} AS values"
-    result = session.run(query)
-    return [record["values"] for record in result]
-
-def build_enriched_schema():
-    uri = os.getenv("NEO4J_URI")
-    user = os.getenv("NEO4J_USER")
-    password = os.getenv("NEO4J_PASSWORD")
-    driver = GraphDatabase.driver(uri, auth=(user, password))
-
-    with driver.session() as session:
-        order_status_values = get_distinct_values(session, "MaintenanceWorkOrder", "order_status")
-        maintenance_type_values = get_distinct_values(session, "MaintenanceWorkOrder", "maintenance_type")
-        fault_category_values = get_distinct_values(session, "MachineFault", "fault_category")
-    driver.close()
-
-    schema = f"""
-# Node Labels and Properties
-(:MaintenanceWorkOrder {{work_order_id: 'INTEGER', maintenance_type: 'STRING' /* one of: {maintenance_type_values} */, order_status: 'STRING' /* one of: {order_status_values} */, actual_finish_date: 'DATE'}})
-(:Equipment {{sap_equipment_number: 'STRING', sap_equipment_description: 'STRING'}})
-(:MachineDowntimeEvent {{event_start_datetime: 'DATETIME', downtime_in_minutes: 'FLOAT'}})
-(:Machine {{machine_description: 'STRING'}})
-(:Location {{location_name: 'STRING'}})
-(:MachineFault {{fault_description: 'STRING', fault_category: 'STRING' /* one of: {fault_category_values} */}})
-
-# Relationships
-(:Machine)-[:FALLS_UNDER]->(:Location)
-(:Machine)-[:PROCESS_FLOWS_TO]->(:Machine)
-(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)
-(:Equipment)-[:MAPS_TO]->(:Machine)
-(:MachineDowntimeEvent)-[:DUE_TO_FAULT]->(:MachineFault)
-(:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)
-"""
-    return schema
-
-# --- END: Self-Contained Schema Builder Logic ---
 
 # Build the schema automatically on startup
 graph_schema = build_enriched_schema()
@@ -81,9 +41,9 @@ class Neo4jLLMConnector:
         self.graph = Neo4jGraph(
             url=os.getenv("NEO4J_URI"),
             username=os.getenv("NEO4J_USER"),
-            password=os.getenv("NEO4J_PASSWORD"),
-            schema=graph_schema  # Re-enabling for fast startup
+            password=os.getenv("NEO4J_PASSWORD")
         )
+        self.graph.schema = graph_schema
         self.llm = ChatOpenAI(temperature=0, model="gpt-4o")
         
         self.chain = GraphCypherQAChain.from_llm(
