@@ -1,37 +1,29 @@
 import os
 from flask import Flask, render_template_string, request, jsonify
-from google.cloud import secretmanager
 
 # --- START: Secure Secret Loading ---
-# This block runs only once when the application starts.
-
-def access_secret_version(project_id, secret_id, version_id="latest"):
-    """
-    Access the payload for the given secret version and return it.
-    """
-    client = secretmanager.SecretManagerServiceClient()
-    name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
-    response = client.access_secret_version(request={"name": name})
-    return response.payload.data.decode("UTF-8")
-
-# Get the Project ID from the environment (automatically set by App Engine)
+# This block must run before other imports
 project_id = os.environ.get('GCP_PROJECT')
-
 if project_id:
+    from google.cloud import secretmanager
     print("Loading secrets from Google Cloud Secret Manager...")
     try:
-        # Fetch secrets and set them as environment variables
-        os.environ['OPENAI_API_KEY'] = access_secret_version(project_id, 'openai-api-key')
-        os.environ['NEO4J_URI'] = access_secret_version(project_id, 'neo4j-uri')
-        os.environ['NEO4J_USER'] = access_secret_version(project_id, 'neo4j-user')
-        os.environ['NEO4J_PASSWORD'] = access_secret_version(project_id, 'neo4j-password')
+        client = secretmanager.SecretManagerServiceClient()
+        
+        def access_secret_version(secret_id, version_id="latest"):
+            name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
+            response = client.access_secret_version(request={"name": name})
+            return response.payload.data.decode("UTF-8")
+
+        os.environ['OPENAI_API_KEY'] = access_secret_version('openai-api-key')
+        os.environ['NEO4J_URI'] = access_secret_version('neo4j-uri')
+        os.environ['NEO4J_USER'] = access_secret_version('neo4j-user')
+        os.environ['NEO4J_PASSWORD'] = access_secret_version('neo4j-password')
         print("Secrets loaded successfully.")
     except Exception as e:
         print(f"FATAL: Failed to load secrets from Secret Manager. Error: {e}")
 # --- END: Secure Secret Loading ---
 
-
-# Now we can import our chain, which will use the environment variables we just set
 from cypher_chain import Neo4jLLMConnector
 
 app = Flask(__name__)
@@ -44,7 +36,6 @@ except Exception as e:
 
 # ... (The rest of your app.py file remains the same) ...
 
-# --- HTML, CSS, and JavaScript Template ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -155,25 +146,18 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- Flask Routes ---
-
 @app.route('/')
 def index():
-    """Serves the main HTML page."""
     return render_template_string(HTML_TEMPLATE)
 
 @app.route('/ask', methods=['POST'])
 def ask():
-    """Handles the API call from the frontend to ask a question."""
     if not connector:
-        return jsonify({"error": "The application is not initialized correctly. Check server logs."}), 500
-        
+        return jsonify({"error": "Application not initialized. Check server logs."}), 500
     data = request.get_json()
     question = data.get('question')
-
     if not question:
         return jsonify({"error": "No question provided"}), 400
-
     try:
         cypher_query, final_answer = connector.ask(question)
         return jsonify({"cypher_query": cypher_query, "final_answer": final_answer})
@@ -182,4 +166,4 @@ def ask():
         return jsonify({"error": "An internal error occurred."}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    app.run(host='0.0.0', port=int(os.environ.get('PORT', 8080)))
