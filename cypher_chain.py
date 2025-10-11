@@ -4,12 +4,15 @@ from langchain.chains import GraphCypherQAChain
 from langchain_openai import ChatOpenAI
 from langchain.prompts.prompt import PromptTemplate
 from dotenv import load_dotenv
-from db_connector import db_conn # Assuming db_connector is used by schema_builder
+from db_connector import db_conn
 
-# Placeholder for the schema builder function
+load_dotenv()
+
+# --- START: Self-Contained Schema Builder Logic ---
 def build_enriched_schema():
-    # This function should connect and build the schema as we defined
-    # For now, I'll use a static version for clarity
+    """
+    Connects to Neo4j using db_conn, fetches distinct values, and returns a schema string.
+    """
     def get_distinct_values(node_label, property_name):
         query = f"MATCH (n:{node_label}) WHERE n.{property_name} IS NOT NULL RETURN DISTINCT n.{property_name} AS values"
         results = db_conn.run_query(query)
@@ -35,67 +38,49 @@ def build_enriched_schema():
 (:Equipment)-[:MAPS_TO]->(:Machine)
 (:MachineDowntimeEvent)-[:DUE_TO_FAULT]->(:MachineFault)
 (:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)
+(:MachineDowntimeEvent)-[:PRECEDES]->(:MachineDowntimeEvent)
 """
     return schema
+# --- END: Self-Contained Schema Builder Logic ---
 
-
-load_dotenv()
-
-# Build the schema automatically on startup
 graph_schema = build_enriched_schema()
 
-# Define Few-Shot Examples (with corrected type conversion for date math)
 cypher_examples = [
+    {"question": "How many machines are there?", "query": "MATCH (m:Machine) RETURN count(m);"},
+    {"question": "Did any downtime occur on a machine within 7 days after maintenance?", "query": "MATCH (wo:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(e:Equipment)-[:MAPS_TO]->(m:Machine)-[:RECORDED_DOWNTIME_EVENT]->(d:MachineDowntimeEvent) WHERE d.event_start_datetime > datetime(wo.actual_finish_date) AND d.event_start_datetime < datetime(wo.actual_finish_date) + duration({days: 7}) RETURN m.machine_description, wo.work_order_description LIMIT 5;"},
     {
-        "question": "Which machine had the most downtime events?",
-        "query": """MATCH (m:Machine)-[:RECORDED_DOWNTIME_EVENT]->(d:MachineDowntimeEvent)
-                    WITH m, COUNT(d) AS downtime_events
-                    RETURN m.machine_description AS machine, downtime_events
-                    ORDER BY downtime_events DESC
-                    LIMIT 1;""",
-    },
-    {
-        "question": "Are there any overdue maintenance work orders?",
-        "query": """MATCH (wo:MaintenanceWorkOrder)
-                    WHERE wo.order_status IN ["In Progress", "Not Started"] AND wo.planned_date < date()
-                    RETURN wo.work_order_id, wo.work_order_description, wo.planned_date
-                    LIMIT 5;""",
-    },
-    {
-        "question": "Did any downtime occur on a machine within 7 days after maintenance was completed on it?",
-        "query": """MATCH (wo:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(e:Equipment)-[:MAPS_TO]->(m:Machine)-[:RECORDED_DOWNTIME_EVENT]->(d:MachineDowntimeEvent)
-                    WHERE d.event_start_datetime > datetime(wo.actual_finish_date) 
-                      AND d.event_start_datetime < datetime(wo.actual_finish_date) + duration({days: 7})
-                    RETURN m.machine_description, wo.work_order_description, d.event_start_datetime
-                    LIMIT 5;""",
+        "question": "Find the root cause of a cascading failure.",
+        "query": """MATCH path = (root_cause:MachineDowntimeEvent)-[:PRECEDES*]->(downstream_event:MachineDowntimeEvent)
+                    WHERE NOT (root_cause)<-[:PRECEDES]-()
+                    WITH path, length(path) AS len
+                    ORDER BY len DESC
+                    LIMIT 1
+                    UNWIND nodes(path) AS event
+                    MATCH (event)<-[:RECORDED_DOWNTIME_EVENT]-(m:Machine)
+                    RETURN m.machine_description AS machine, event.event_start_datetime AS time
+                    ORDER BY time;""",
     }
 ]
 
-# Define the Custom Prompt Template (with a new rule for type conversion)
-CYPHER_GENERATION_TEMPLATE = """You are an expert Neo4j Cypher query developer. Your ONLY task is to write a single, syntactically correct Cypher query to answer the user's question. DO NOT add any text before or after the query.
+CYPHER_GENERATION_TEMPLATE = """You are an expert Neo4j developer. Write a Cypher query to answer the user's question.
 
 You must follow these strict rules:
-1.  **Use ONLY the nodes, relationships, and properties provided in the Schema.**
-2.  **Follow the graph structure.** Do not create paths that do not exist.
-3.  **Handle DATE to DATETIME conversion.** Properties of type `DATE` (like `actual_finish_date`) MUST be converted to a `DATETIME` using `datetime()` before you can add a `duration` to them. For example: `datetime(wo.actual_finish_date) + duration({days: 7})`.
-4.  **To correlate maintenance with downtime**, use the path: `(:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)-[:MAPS_TO]->(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)`.
-5.  **Use provided values.** When a property has a comment listing possible values, you MUST use those values.
-6.  **Count events, not nodes.** To find the "frequency" of a fault, you MUST count `MachineDowntimeEvent` nodes.
-7.  **Always return properties.** Do not return entire nodes.
+1. Use ONLY the nodes, relationships, and properties in the provided Schema.
+2. To correlate maintenance with downtime, use the path: `(:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)-[:MAPS_TO]->(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)`.
+3. To find the root cause of a failure, traverse backwards using the `[:PRECEDES]` relationship (e.g., `(cause)-[:PRECEDES*]->(effect)`).
+4. Handle DATE to DATETIME conversion using the `datetime()` function before adding a duration.
+5. Use the values in comments when filtering (e.g., `/* one of: ... */`).
 
 Schema:
 {schema}
 ---
-Here are some examples of questions and their correct Cypher queries:
+Examples:
 {examples}
 ---
-The question is:
-{question}
-"""
+Question: {question}"""
 
 CYPHER_PROMPT = PromptTemplate.from_template(CYPHER_GENERATION_TEMPLATE)
 
-# The Connector Class
 class Neo4jLLMConnector:
     def __init__(self):
         self.graph = Neo4jGraph(
