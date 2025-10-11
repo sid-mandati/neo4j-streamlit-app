@@ -6,7 +6,7 @@ import pandas as pd
 app = Flask(__name__)
 
 try:
-    # This will now be slow on the first startup as it builds the schema
+    # Initialization should now be very fast.
     connector = Neo4jLLMConnector()
 except Exception as e:
     print(f"FATAL: Failed to initialize Neo4jLLMConnector. Check credentials. Error: {e}")
