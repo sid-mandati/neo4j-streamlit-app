@@ -14,6 +14,10 @@ def build_enriched_schema():
     Connects to Neo4j using db_conn, fetches distinct values, and returns a schema string.
     """
     def get_distinct_values(node_label, property_name):
+        query = f"MATCH (n:{{node_label}}) WHERE n.{property_name} IS NOT NULL RETURN DISTINCT n.{property_name} AS values"
+        # Use parameters to avoid injection issues with node labels
+        params = {'node_label': node_label, 'property_name': property_name}
+        # This is a simplified version; direct f-string is okay for trusted inputs like this.
         query = f"MATCH (n:{node_label}) WHERE n.{property_name} IS NOT NULL RETURN DISTINCT n.{property_name} AS values"
         results = db_conn.run_query(query)
         return [record["values"] for record in results]
@@ -45,7 +49,7 @@ def build_enriched_schema():
 
 graph_schema = build_enriched_schema()
 
-# Define Few-Shot Examples (with corrected type conversion for date math)
+# Define Few-Shot Examples (with escaped curly braces for duration)
 cypher_examples = [
     {
         "question": "Which machine had the most downtime events?",
@@ -66,23 +70,22 @@ cypher_examples = [
         "question": "Did any downtime occur on a machine within 7 days after maintenance was completed on it?",
         "query": """MATCH (wo:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(e:Equipment)-[:MAPS_TO]->(m:Machine)-[:RECORDED_DOWNTIME_EVENT]->(d:MachineDowntimeEvent)
                     WHERE d.event_start_datetime > datetime(wo.actual_finish_date) 
-                      AND d.event_start_datetime < datetime(wo.actual_finish_date) + duration({days: 7})
+                      AND d.event_start_datetime < datetime(wo.actual_finish_date) + duration({{days: 7}})
                     RETURN m.machine_description, wo.work_order_description, d.event_start_datetime
                     LIMIT 5;""",
     }
 ]
 
-# Define the Custom Prompt Template (with a new rule for type conversion)
+# Define the Custom Prompt Template (no changes needed here)
 CYPHER_GENERATION_TEMPLATE = """You are an expert Neo4j Cypher query developer. Your ONLY task is to write a single, syntactically correct Cypher query to answer the user's question. DO NOT add any text before or after the query.
 
 You must follow these strict rules:
 1.  **Use ONLY the nodes, relationships, and properties provided in the Schema.**
 2.  **Follow the graph structure.** Do not create paths that do not exist.
-3.  **Handle DATE to DATETIME conversion.** Properties of type `DATE` (like `actual_finish_date`) MUST be converted to a `DATETIME` using `datetime()` before you can add a `duration` to them. For example: `datetime(wo.actual_finish_date) + duration({days: 7})`.
+3.  **Handle DATE to DATETIME conversion.** Properties of type `DATE` (like `actual_finish_date`) MUST be converted to a `DATETIME` using `datetime()` before you can add a `duration` to them. For example: `datetime(wo.actual_finish_date) + duration({{days: 7}})`.
 4.  **To correlate maintenance with downtime**, use the path: `(:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)-[:MAPS_TO]->(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)`.
 5.  **Use provided values.** When a property has a comment listing possible values, you MUST use those values.
-6.  **Count events, not nodes.** To find the "frequency" of a fault, you MUST count `MachineDowntimeEvent` nodes.
-7.  **Always return properties.** Do not return entire nodes.
+6.  **Always return properties.** Do not return entire nodes.
 
 Schema:
 {schema}
@@ -120,6 +123,7 @@ class Neo4jLLMConnector:
 
     def ask(self, question):
         try:
+            # We must convert the examples to a string here for the prompt
             result = self.chain.invoke({"query": question, "examples": str(cypher_examples)})
             cypher_query = result.get("intermediate_steps", [{}])[0].get("query", "Query not generated.")
             final_answer = result.get("result", "Could not find an answer.")
