@@ -74,4 +74,47 @@ cypher_examples = [
 CYPHER_GENERATION_TEMPLATE = """You are an expert Neo4j developer. Write a Cypher query to answer the user's question.
 
 You must follow these strict rules:
-1.  **CRITICAL RULE
+1.  **CRITICAL RULE for Dates:** Properties of type `DATE` (like `actual_finish_date`) MUST be converted to a `DATETIME` using `datetime(toString(date_property))` before you can add a `duration` to them.
+2.  Use ONLY the nodes, relationships, and properties provided in the Schema. Pay close attention to comments `/* ... */`.
+3.  To correlate maintenance with downtime, use the path: `(:MaintenanceWorkOrder)-[:PERFORMED_ON_EQUIPMENT]->(:Equipment)-[:MAPS_TO]->(:Machine)-[:RECORDED_DOWNTIME_EVENT]->(:MachineDowntimeEvent)`.
+
+Schema:
+{schema}
+---
+Examples:
+{examples}
+---
+Question: {question}"""
+
+CYPHER_PROMPT = PromptTemplate.from_template(CYPHER_GENERATION_TEMPLATE)
+
+# The Connector Class
+class Neo4jLLMConnector:
+    def __init__(self):
+        self.graph = Neo4jGraph(
+            url=os.getenv("NEO4J_URI"),
+            username=os.getenv("NEO4J_USER"),
+            password=os.getenv("NEO4J_PASSWORD"),
+            database=os.getenv("NEO4J_DATABASE", "neo4j")
+        )
+        self.graph.schema = graph_schema
+        self.llm = ChatOpenAI(temperature=0, model="gpt-4o")
+        
+        self.chain = GraphCypherQAChain.from_llm(
+            graph=self.graph,
+            llm=self.llm,
+            cypher_prompt=CYPHER_PROMPT,
+            verbose=True,
+            return_intermediate_steps=True,
+            allow_dangerous_requests=True,
+            return_direct=True
+        )
+
+    def ask(self, question):
+        try:
+            result = self.chain.invoke({"query": question, "examples": str(cypher_examples)})
+            cypher_query = result.get("intermediate_steps", [{}])[0].get("query", "Query not generated.")
+            final_answer = result.get("result", "Could not find an answer.")
+            return cypher_query, final_answer
+        except Exception as e:
+            return "An error occurred", str(e)
