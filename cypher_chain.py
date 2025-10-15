@@ -73,9 +73,9 @@ cypher_examples = [
 CYPHER_GENERATION_TEMPLATE = """You are an expert Neo4j developer. Your ONLY task is to write a single, syntactically correct Cypher query to answer the user's question.
 
 You MUST follow these strict rules:
-1.  **ROOT CAUSE ANALYSIS:** For any question about "root cause", "cascading failure", "led to", or a sequence of events, you MUST traverse backwards using the `[:PRECEDES]` relationship. For example: `(cause)-[:PRECEDES*]->(effect)`.
+1.  **ROOT CAUSE ANALYSIS:** For any question about "root cause", "cascading failure", "led to", or a sequence of events, you MUST traverse backwards using the `[:PRECEDES]` relationship. This is the most important rule. For example: `(cause)-[:PRECEDES*]->(effect)`.
 2.  **COUNTING FREQUENCY:** To find the "frequency" or "number of times" a fault occurs, you MUST count the `(:MachineDowntimeEvent)` nodes connected to that fault, not the `(:MachineFault)` nodes themselves.
-3.  **USE PROVIDED VALUES:** When a property has a comment listing possible values (e.g., `/* one of: ... */`), you MUST use the values from that list when filtering. Do not guess other values.
+3.  **USE PROVIDED VALUES:** When a property has a comment listing possible values (e.g., `/* one of: ... */`), you MUST use the values from that list when filtering. Do not guess other values like 'open' or 'Corrective Maintenance'.
 4.  **DATE CONVERSION:** You MUST convert `DATE` properties to `DATETIME` using `datetime(toString(date_property))` before adding a `duration`.
 5.  **SCHEMA ADHERENCE:** Use ONLY the nodes, relationships, and properties provided in the Schema. Do not hallucinate any others.
 
