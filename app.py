@@ -2,7 +2,8 @@ from flask import Flask, render_template_string, request, jsonify
 from cypher_chain import Neo4jLLMConnector
 import os
 import pandas as pd
-from neo4j.time import DateTime
+# We need to import the DateTime and Date types from the neo4j driver
+from neo4j.time import DateTime, Date
 
 app = Flask(__name__)
 
@@ -12,16 +13,17 @@ except Exception as e:
     print(f"FATAL: Failed to initialize Neo4jLLMConnector. Check credentials. Error: {e}")
     connector = None
 
-# --- START: New Helper Function ---
+# --- START: New Helper Function to Sanitize Data ---
 def sanitize_for_json(data):
     """
-    Recursively finds and converts Neo4j DateTime objects to ISO format strings.
+    Recursively finds and converts Neo4j Date/DateTime objects to ISO format strings.
     """
     if isinstance(data, list):
         return [sanitize_for_json(item) for item in data]
     if isinstance(data, dict):
         return {key: sanitize_for_json(value) for key, value in data.items()}
-    if isinstance(data, DateTime):
+    # Check for both DateTime and Date types
+    if isinstance(data, (DateTime, Date)):
         return data.isoformat()
     return data
 # --- END: New Helper Function ---
@@ -157,12 +159,13 @@ def ask():
 
     try:
         cypher_query, final_answer = connector.ask(question)
-        # Sanitize the result to ensure it's JSON-serializable
+        # Use the sanitizer before sending the response
         sanitized_answer = sanitize_for_json(final_answer)
         return jsonify({"cypher_query": cypher_query, "final_answer": sanitized_answer})
     except Exception as e:
+        # Provide a more informative error message to the UI
         print(f"Error during ask: {e}")
-        return jsonify({"error": "An internal error occurred."}), 500
+        return jsonify({"error": f"An internal error occurred: {str(e)}"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
